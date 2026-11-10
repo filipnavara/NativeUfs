@@ -339,10 +339,10 @@ static void dpuEnable (uintptr_t smmu, uintptr_t cb, uint32_t bank, uint32_t old
   // real three-level one from level 1 (the same table serves, [0] then acting as the level 2 table); sheng-dpu-tables=<physical address>
   // puts the tables there instead of in XNU's RAM (the 3a: the unused tail of the display's own splash region), mapped uncached.
   uint32_t t0sz = 32;
-  PE_parse_boot_argn ("sheng-dpu-t0sz", &t0sz, sizeof (t0sz));
+  PE_parse_boot_argn ("dpu-t0sz", &t0sz, sizeof (t0sz));
   if (t0sz != 25) t0sz = 32;
   uint64_t place = 0;
-  PE_parse_boot_argn ("sheng-dpu-tables", &place, sizeof (place));
+  PE_parse_boot_argn ("dpu-tables", &place, sizeof (place));
   IOBufferMemoryDescriptor *tables = nullptr;
   static IOMemoryMap *placedMap;
   uint64_t *l1 = nullptr;
@@ -364,14 +364,14 @@ static void dpuEnable (uintptr_t smmu, uintptr_t cb, uint32_t bank, uint32_t old
   // sheng-dpu-af=1: the identity blocks without their access flag. A walker that reaches them must then report an access flag fault, not
   // a translation fault; a translation fault means it never got to our entries.
   uint32_t noAccessFlag = 0;
-  PE_parse_boot_argn ("sheng-dpu-af", &noAccessFlag, sizeof (noAccessFlag));
+  PE_parse_boot_argn ("dpu-af", &noAccessFlag, sizeof (noAccessFlag));
   noAccessFlag = noAccessFlag == 1;
   // sheng-dpu-linux=1: the bank set up as the 3a's Linux does it (arm_smmu_write_context_bank). The 3a's apps SMMU is "qcom,virt-smmu":
   // the hypervisor traps its global registers, and Linux writes CBAR before turning a stream on so that the hypervisor fills in the VM's
   // VMID; the boot loader's CBAR (VMID 0) is never written otherwise. Then TCR2 with the ASID size and SEP, cached inner-shareable walks
   // (the display node is dma-coherent) with a 36-bit input (T0SZ 28, a walk from level 1 like 32), and TTBR0 with an ASID.
   uint32_t linuxBank = 0;
-  PE_parse_boot_argn ("sheng-dpu-linux", &linuxBank, sizeof (linuxBank));
+  PE_parse_boot_argn ("dpu-linux", &linuxBank, sizeof (linuxBank));
   linuxBank = linuxBank == 1;
   if (linuxBank) t0sz = 28;
   IOLog ("NativeUfs: display stage 1, T0SZ %u, tables at %llx (%s)%s%s\n", t0sz, pa, place ? "placed" : "XNU RAM",
@@ -1107,7 +1107,7 @@ static bool hostBringUp (const char **why)
   // The board's WiFi endpoint (sheng-wifi=2 or more) needs a pass-through stream of its own, set up here with the same code and at the same moment as the
   // storage stream: the registers of the stream matching group are not safe to touch from another thread later (a read of the first one never returned).
   uint32_t wifi = 0;
-  if (PE_parse_boot_argn ("sheng-wifi", &wifi, sizeof (wifi)) && wifi >= 2) {
+  if (PE_parse_boot_argn ("wifi", &wifi, sizeof (wifi)) && wifi >= 2) {
     static OSSharedPtr<IOMemoryMap> extraMap;   // kept: the fault registers are read from it later
     uint32_t extraReport[3] = { 0, 0, 0 };
     smmuBypassStream (0x1401, extraMap, extraReport, 0x9c900000ULL, 8ULL << 20);
@@ -1134,7 +1134,7 @@ static bool hostBringUp (const char **why)
       const uint64_t tablesPa = tables->getPhysicalSegment (0, nullptr, kIOMemoryMapperNone);
       l1[0] = (tablesPa + 4096) | 3;
       uint32_t attr = 0;
-      PE_parse_boot_argn ("sheng-wifi-attr", &attr, sizeof (attr));   // 1: normal non-cacheable, non-shareable memory for the endpoint's accesses
+      PE_parse_boot_argn ("wifi-attr", &attr, sizeof (attr));   // 1: normal non-cacheable, non-shareable memory for the endpoint's accesses
       const uint64_t share = attr == 1 ? 0 : (3ULL << 8);
       for (uint32_t i = 0; i < kExtraBlocks; ++i)
         l2[(kExtraIova >> 21) + i] = (bpa + i * kBlock) | (1ULL << 11) | (1ULL << 10) | share | (1ULL << 6) | 1;   // block, non-global, AF, inner shareable, readable and writable by unprivileged requesters, attribute index 0
@@ -1188,8 +1188,8 @@ static bool hostBringUp (const char **why)
   // The display's streams (sheng-dpu=2 or more, or sheng-dpu-scanout), read here for the same reason: what the boot loader left for 0x1c00 and 0x1c02 (`iommus =
   // <&apps_smmu 0x1c00 0x2>`), the first step of letting the display fetch the compositor's pages. Nothing is written.
   uint32_t dpu = 0, scanout = 0;
-  PE_parse_boot_argn ("sheng-dpu", &dpu, sizeof (dpu));
-  PE_parse_boot_argn ("sheng-dpu-scanout", &scanout, sizeof (scanout));
+  PE_parse_boot_argn ("dpu", &dpu, sizeof (dpu));
+  PE_parse_boot_argn ("dpu-scanout", &scanout, sizeof (scanout));
   if (dpu >= 2 || scanout) {
     const uintptr_t s = gHost.smmu;
     const uint32_t idr0 = read32 (s, 0x20), idr1 = read32 (s, 0x24);
@@ -1323,7 +1323,7 @@ static uint64_t reserveBlocks (void)
   static int64_t cached = -1;
   if (cached < 0) {
     uint32_t mib = kDefaultReserveMiB;
-    if (!PE_parse_boot_argn ("sheng-log-reserve", &mib, sizeof (mib)) || mib > 16384) mib = kDefaultReserveMiB;
+    if (!PE_parse_boot_argn ("log-reserve", &mib, sizeof (mib)) || mib > 16384) mib = kDefaultReserveMiB;
     cached = static_cast<int64_t> (mib) * 256;   // 4096-byte blocks
   }
   return static_cast<uint64_t> (cached);
@@ -1334,7 +1334,7 @@ static unsigned storeMode (void)
   static int cached = -1;
   if (cached < 0) {
     uint32_t value = 0;
-    if (!PE_parse_boot_argn ("sheng-data-persist", &value, sizeof (value)) || value > 2) value = 0;
+    if (!PE_parse_boot_argn ("data-persist", &value, sizeof (value)) || value > 2) value = 0;
     cached = static_cast<int> (value);
   }
   return static_cast<unsigned> (cached);
@@ -1416,6 +1416,14 @@ extern "C" int native_ufs_store_write (uint64_t rel, uint32_t blocks, const void
     blocks -= chunk;
   }
   return 1;
+}
+
+// UniXNU RamBlock's write-back overlay (upstream ShengUfs 79ebdeb) writes its pages without forced unit access and syncs before the
+// bitmap. This fork keeps its single-command path: the cached write is the forced-unit-access write, durable at once, so the
+// overlay's later sync finds nothing left in the device's cache. Slower than upstream's, never less safe.
+extern "C" int native_ufs_store_write_cached (uint64_t rel, uint32_t blocks, const void *src)
+{
+  return native_ufs_store_write (rel, blocks, src);
 }
 
 extern "C" int native_ufs_store_sync (void)
@@ -1538,7 +1546,7 @@ static unsigned logMode (void)
   static int cached = -1;
   if (cached < 0) {
     uint32_t value = 0;
-    if (!PE_parse_boot_argn ("sheng-log", &value, sizeof (value)) || value > 1) value = 0;
+    if (!PE_parse_boot_argn ("log", &value, sizeof (value)) || value > 1) value = 0;
     cached = static_cast<int> (value);
   }
   return static_cast<unsigned> (cached);
@@ -2078,6 +2086,9 @@ static bool mediaWithUuidExists (const char *uuid, NativeUfsBlock *window)
 // verified VirtIO driver authorizes each volume against the owner policy; this
 // UFS bring-up build accepts only the explicit native-ufs-allow-unverified
 // mode and resolves the published SystemOS volume by its APFS UUID.
+// iPadOS 17 only: the source storage runtime (NATIVE_UFS_SOURCE_API, iOS 27) authorizes the signed windows in
+// SourceRootBinding.cpp, which defines both helpers.
+#if !(defined(NATIVE_UFS_SOURCE_API) && NATIVE_UFS_SOURCE_API)
 extern "C" int native_verified_block_root_authorized (dev_t device)
 {
   (void) device;
@@ -2140,6 +2151,7 @@ extern "C" int native_verified_block_volume_device (const char *uuid, dev_t *dev
   }
   return 0;
 }
+#endif
 
 static void captureMissingMedia (const char *uuid)
 {
