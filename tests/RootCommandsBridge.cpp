@@ -37,9 +37,20 @@ static uint64_t mach_absolute_time() { return callback(4,0,0,nullptr); }
 static void IODelay(uint32_t us) { callback(5,0,us,nullptr); }
 static void IOLockLock(void *) {}
 static void IOLockUnlock(void *) {}
+static bool IOLockTryLock(void *) { return true; }
+struct IOLock;
+constexpr int THREAD_UNINT=0;
+static int IOLockSleep(void *, void *, int) { assert(!"single-threaded harness: the slot pool never runs empty"); return 0; }
+static void IOLockWakeup(void *, void *, bool) {}
 static IOReturn recordTransport(IOReturn result,uint32_t ocs) {
   gRootDiagnostic.result=result; gRootDiagnostic.ocs=ocs; return result;
 }
+// Polling port: no completion interrupt.
+static uint32_t hostCompletionCount(unsigned) { return 0; }
+static bool hostInterruptMode() { return false; }
+static void hostWaitCompletion(unsigned, uint32_t, uint64_t) { IODelay(2); }
+static void hostWaitDone(uint64_t) {}
+static uint64_t hostDmaAddress(const void *) { return 0; }   // no zero copy in the host model
 #include "../RootCommands.h"
 #include "../RootQueue.h"
 extern "C" {
@@ -47,6 +58,16 @@ void ufs_test_reset(Callback cb, uint64_t physical) {
   callback=cb; memset(memory,0,sizeof(memory));
   gHost={memory,physical,true,false,0,nullptr}; gRootDiagnostic=UfsRootDiagnostics{};
   gStoreOpen=gLogOpen=false; gStoreFirst=gStoreBlocks=gLogFirst=gLogBlocks=0;
+  hostSlotGeometryRegionA(kRegionSlots); hostSlotsInit(kRegionSlots,nullptr); gHostPanic=false; gOutstanding=0;
+}
+void ufs_test_slots(unsigned count) { hostSlotGeometryRegionA(count); hostSlotsInit(count,nullptr); }
+unsigned ufs_test_slot_count() { return gSlotCount; }
+int ufs_test_slot_take() { bool pooled; UfsSlot slot=hostSlotTake(&pooled); return pooled ? int(slot.index) : -1-int(slot.index); }
+void ufs_test_slot_give(unsigned index) { hostSlotGive(ufsSlot(index),true); }
+uint32_t ufs_test_free_slots() { return gSlotFree; }
+void ufs_test_panic() { gHostPanic=true; }
+uint32_t ufs_test_scsi_slot(unsigned slot,uint8_t lun,const uint8_t *cdb,unsigned length,uint32_t bytes,uint32_t *scsi) {
+  return hostScsiDir(ufsSlot(slot),lun,cdb,length,bytes?2U:0U,bytes,200000,scsi);
 }
 uint8_t *ufs_test_memory() { return memory; }
 bool ufs_test_poisoned() { return gHost.poisoned; }
